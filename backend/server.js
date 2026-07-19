@@ -48,9 +48,35 @@ app.get('/api/tokens', async (req, res) => {
 
 app.get('/', (req, res) => res.send('Backend CEX is running...'));
 
+// === ENDPOINT TEST TELEGRAM ===
+app.get('/test-telegram', async (req, res) => {
+  try {
+    const message = `🧪 *TEST BOT CEX*\n\nIni adalah pesan tes dari CEX Backend.\nWaktu: ${new Date().toLocaleString()}\nToken: ${TELEGRAM_BOT_TOKEN ? 'Set' : 'Missing'}\nChat ID: ${TELEGRAM_CHAT_ID ? 'Set' : 'Missing'}`;
+    
+    const response = await fetch(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        chat_id: TELEGRAM_CHAT_ID,
+        text: message,
+        parse_mode: 'Markdown'
+      })
+    });
+    
+    const data = await response.json();
+    if (data.ok) {
+      res.send('✅ Pesan terkirim! Cek Telegram Anda.');
+    } else {
+      res.status(500).send('❌ Telegram API Error: ' + JSON.stringify(data));
+    }
+  } catch (err) {
+    res.status(500).send('❌ Gagal: ' + err.message);
+  }
+});
+
 async function sendTelegramAlert(token) {
   const exchangeUrl = token.exchange.toUpperCase();
-  const message = `🚀 *HIGH RVOL DETECTED*\n\n` +
+  const message = ` *HIGH RVOL DETECTED*\n\n` +
     `💎 *Token:* ${token.name} (${token.symbol})\n` +
     `🏛️ *Exchange:* ${token.exchange}\n` +
     `📊 *RVOL:* ${token.rvol.toFixed(2)}x\n` +

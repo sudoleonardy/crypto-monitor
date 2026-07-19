@@ -50,6 +50,32 @@ app.get('/api/signals', async (req, res) => {
 
 app.get('/', (req, res) => res.send('Backend Futures is running...'));
 
+// === ENDPOINT TEST TELEGRAM ===
+app.get('/test-telegram', async (req, res) => {
+  try {
+    const message = `🧪 *TEST BOT FUTURES*\n\nIni adalah pesan tes dari Futures Backend.\nWaktu: ${new Date().toLocaleString()}\nToken: ${TELEGRAM_BOT_TOKEN ? 'Set' : 'Missing'}\nChat ID: ${TELEGRAM_CHAT_ID ? 'Set' : 'Missing'}`;
+    
+    const response = await fetch(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        chat_id: TELEGRAM_CHAT_ID,
+        text: message,
+        parse_mode: 'Markdown'
+      })
+    });
+    
+    const data = await response.json();
+    if (data.ok) {
+      res.send('✅ Pesan terkirim! Cek Telegram Anda.');
+    } else {
+      res.status(500).send('❌ Telegram API Error: ' + JSON.stringify(data));
+    }
+  } catch (err) {
+    res.status(500).send('❌ Gagal: ' + err.message);
+  }
+});
+
 async function sendTelegramAlert(signal) {
   const direction = signal.signal_direction === 'LONG' ? '🟢' : '🔴';
   const confidence = signal.signal_confidence >= 80 ? 'TINGGI' : signal.signal_confidence >= 60 ? 'SEDANG' : 'RENDAH';
@@ -62,15 +88,14 @@ async function sendTelegramAlert(signal) {
     `💹 *Buy/Sell:* ${signal.buy_volume_pct?.toFixed(1)}% / ${(100 - signal.buy_volume_pct).toFixed(1)}%\n` +
     `🎯 *Confidence:* ${signal.signal_confidence.toFixed(0)}%\n` +
     `📝 *Alasan:* ${signal.signal_reason}\n` +
-    `💰 *Entry:* $${signal.entry_price?.toFixed(4)} | SL: $${signal.stop_loss?.toFixed(4)} | TP: $${signal.take_profit?.toFixed(4)}\n` +
-    `🔗 *Chart:* https://www.tradingview.com/chart/?symbol=BINANCE:${signal.symbol}`;
+    ` *Entry:* $${signal.entry_price?.toFixed(4)} | SL: $${signal.stop_loss?.toFixed(4)} | TP: $${signal.take_profit?.toFixed(4)}\n` +
+    ` *Chart:* https://www.tradingview.com/chart/?symbol=BINANCE:${signal.symbol}`;
 
   try {
     await fetch(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ chat_id: TELEGRAM_CHAT_ID, text: message, parse_mode: 'Markdown', disable_web_page_preview: false })
     });
-    console.log(`✅ Telegram terkirim: ${signal.signal_direction} ${signal.symbol}`);
   } catch (err) { console.error(`❌ Gagal kirim Telegram:`, err.message); }
 }
 
@@ -103,14 +128,12 @@ async function fetchBuySellVolume(symbol) {
     const res = await fetch(`https://api.binance.com/api/v3/aggTrades?symbol=${symbol}&limit=500`, { signal: AbortSignal.timeout(3000) });
     if (!res.ok) return null;
     const trades = await res.json();
-    
     let buyVolume = 0, sellVolume = 0;
     trades.forEach(trade => {
       const volume = parseFloat(trade.q);
       if (trade.m) sellVolume += volume;
       else buyVolume += volume;
     });
-    
     const total = buyVolume + sellVolume;
     return total > 0 ? (buyVolume / total) * 100 : 50;
   } catch { return null; }
@@ -123,16 +146,12 @@ async function fetchFuturesData(symbol) {
       fetch(`https://fapi.binance.com/futures/data/openInterestHist?symbol=${symbol}&period=1h&limit=24`, { signal: AbortSignal.timeout(3000) }),
       fetch(`https://fapi.binance.com/fapi/v1/premiumIndex?symbol=${symbol}`, { signal: AbortSignal.timeout(3000) })
     ]);
-    
     if (!oiRes.ok || !histRes.ok || !frRes.ok) return null;
-    
     const [oiData, histData, frData] = await Promise.all([oiRes.json(), histRes.json(), frRes.json()]);
-    
     const currentOI = parseFloat(oiData.openInterest);
     const oldOI = histData.length > 0 ? parseFloat(histData[0].sumOpenInterest) : currentOI;
     const oiChange = oldOI > 0 ? ((currentOI - oldOI) / oldOI) * 100 : 0;
     const fundingRate = parseFloat(frData.lastFundingRate);
-    
     return { oi_change_24h: oiChange, funding_rate: fundingRate };
   } catch { return null; }
 }
@@ -147,58 +166,40 @@ function generateSignal(ticker, rvol, futuresData, buyVolumePct, currentPrice) {
     if (rvol >= 3.0) { confidence += 25; reasons.push('RVOL sangat tinggi'); }
     else if (rvol >= 2.5) { confidence += 20; reasons.push('RVOL tinggi'); }
     else { confidence += 15; reasons.push('RVOL moderat'); }
-    
     if (futuresData.oi_change_24h > 20) { confidence += 25; reasons.push('OI naik signifikan'); }
     else if (futuresData.oi_change_24h > 15) { confidence += 20; reasons.push('OI naik'); }
     else { confidence += 15; reasons.push('OI naik moderat'); }
-    
     if (futuresData.funding_rate < 0) { confidence += 20; reasons.push('FR negatif'); }
     else if (futuresData.funding_rate < 0.0001) { confidence += 15; reasons.push('FR rendah'); }
     else { confidence += 10; reasons.push('FR netral'); }
-    
     if (buyVolumePct > 65) { confidence += 20; reasons.push('Buy volume dominan'); }
     else if (buyVolumePct > 60) { confidence += 15; reasons.push('Buy volume lebih tinggi'); }
     else { confidence += 10; reasons.push('Buy volume sedikit dominan'); }
-    
-    if (ticker.price_change_24h >= -2 && ticker.price_change_24h <= 5) {
-      confidence += 10; reasons.push('Price sideways');
-    }
+    if (ticker.price_change_24h >= -2 && ticker.price_change_24h <= 5) { confidence += 10; reasons.push('Price sideways'); }
   }
   else if (rvol >= 2.0 && futuresData.oi_change_24h > 10 && futuresData.funding_rate > 0.0005 && buyVolumePct < 45) {
     direction = 'SHORT';
     if (rvol >= 3.0) { confidence += 25; reasons.push('RVOL sangat tinggi'); }
     else if (rvol >= 2.5) { confidence += 20; reasons.push('RVOL tinggi'); }
     else { confidence += 15; reasons.push('RVOL moderat'); }
-    
     if (futuresData.oi_change_24h > 20) { confidence += 25; reasons.push('OI naik signifikan'); }
     else if (futuresData.oi_change_24h > 15) { confidence += 20; reasons.push('OI naik'); }
     else { confidence += 15; reasons.push('OI naik moderat'); }
-    
     if (futuresData.funding_rate > 0.001) { confidence += 20; reasons.push('FR sangat tinggi'); }
     else if (futuresData.funding_rate > 0.0007) { confidence += 15; reasons.push('FR tinggi'); }
     else { confidence += 10; reasons.push('FR moderat tinggi'); }
-    
     if (buyVolumePct < 35) { confidence += 20; reasons.push('Sell volume dominan'); }
     else if (buyVolumePct < 40) { confidence += 15; reasons.push('Sell volume lebih tinggi'); }
     else { confidence += 10; reasons.push('Sell volume sedikit dominan'); }
-    
-    if (ticker.price_change_24h >= -5 && ticker.price_change_24h <= 2) {
-      confidence += 10; reasons.push('Price sideways');
-    }
+    if (ticker.price_change_24h >= -5 && ticker.price_change_24h <= 2) { confidence += 10; reasons.push('Price sideways'); }
   }
   
   if (!direction) return null;
   
   const entryPrice = currentPrice;
   let stopLoss, takeProfit;
-  
-  if (direction === 'LONG') {
-    stopLoss = entryPrice * 0.97;
-    takeProfit = entryPrice * 1.06;
-  } else {
-    stopLoss = entryPrice * 1.03;
-    takeProfit = entryPrice * 0.94;
-  }
+  if (direction === 'LONG') { stopLoss = entryPrice * 0.97; takeProfit = entryPrice * 1.06; } 
+  else { stopLoss = entryPrice * 1.03; takeProfit = entryPrice * 0.94; }
   
   return {
     symbol: ticker.symbol, name: ticker.name, price_change_24h: ticker.price_change_24h,
@@ -214,26 +215,19 @@ async function scanSignals() {
   console.log(`\n--- [${new Date().toLocaleTimeString()}] Scan Sinyal Futures ---`);
   const tickers = await fetchBinanceTickers();
   console.log(`✅ Diambil: ${tickers.length} pair`);
-  
   const signals = [];
   
   for (const ticker of tickers) {
     if (ticker.volume_usdt < 10000000) continue;
-    
     const avgVolume7d = await fetchHistoricalVolume(ticker.symbol);
     if (!avgVolume7d || avgVolume7d === 0) continue;
-    
     const rvol = ticker.volume_usdt / avgVolume7d;
     if (rvol < 2.0) continue;
-    
     const futuresData = await fetchFuturesData(ticker.symbol);
     if (!futuresData) continue;
-    
     await new Promise(resolve => setTimeout(resolve, 200));
-    
     const buyVolumePct = await fetchBuySellVolume(ticker.symbol);
     if (buyVolumePct === null) continue;
-    
     await new Promise(resolve => setTimeout(resolve, 150));
     
     ticker.avg_volume_7d = avgVolume7d;
@@ -242,28 +236,17 @@ async function scanSignals() {
     if (signal && signal.signal_confidence >= 60) {
       const existing = await db.execute({ sql: 'SELECT symbol FROM signals WHERE symbol = ?', args: [signal.symbol] });
       if (existing.rows.length === 0) sendTelegramAlert(signal);
-      
       await db.execute({
         sql: `INSERT OR REPLACE INTO signals VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        args: [
-          signal.symbol, signal.name, signal.price_change_24h, signal.volume_usdt,
-          signal.rvol, signal.avg_volume_7d, signal.oi_change_24h, signal.funding_rate,
-          signal.buy_volume_pct, signal.signal_direction, signal.signal_confidence, signal.signal_reason,
-          signal.entry_price, signal.stop_loss, signal.take_profit, signal.updated_at
-        ]
+        args: [signal.symbol, signal.name, signal.price_change_24h, signal.volume_usdt, signal.rvol, signal.avg_volume_7d, signal.oi_change_24h, signal.funding_rate, signal.buy_volume_pct, signal.signal_direction, signal.signal_confidence, signal.signal_reason, signal.entry_price, signal.stop_loss, signal.take_profit, signal.updated_at]
       });
       signals.push(signal);
       console.log(`${signal.signal_direction} ${signal.symbol} - Confidence: ${signal.signal_confidence}%`);
     }
     await new Promise(resolve => setTimeout(resolve, 100));
   }
-  
-  if (signals.length > 0) {
-    broadcast(signals);
-    console.log(`\n🚀 DITEMUKAN: ${signals.length} sinyal futures!\n`);
-  } else {
-    console.log(`\n⚠️ Tidak ada sinyal futures saat ini.\n`);
-  }
+  if (signals.length > 0) { broadcast(signals); console.log(`🚀 DITEMUKAN: ${signals.length} sinyal futures!`); } 
+  else { console.log(`⚠️ Tidak ada sinyal futures saat ini.`); }
 }
 
 async function startServer() {
