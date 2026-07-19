@@ -37,38 +37,70 @@ export default function Home() {
   const [futuresSignals, setFuturesSignals] = useState<FuturesSignal[]>([]);
 
   useEffect(() => {
+    // DEBUG: Log environment variables
+    console.log('=== ENVIRONMENT VARIABLES CHECK ===');
+    console.log('NEXT_PUBLIC_CEX_API:', process.env.NEXT_PUBLIC_CEX_API);
+    console.log('NEXT_PUBLIC_FUTURES_API:', process.env.NEXT_PUBLIC_FUTURES_API);
+    console.log('=====================================');
+
+    const CEX_API = process.env.NEXT_PUBLIC_CEX_API || 'http://localhost:4000';
+    const FUTURES_API = process.env.NEXT_PUBLIC_FUTURES_API || 'http://localhost:4001';
+
+    console.log('Using CEX_API:', CEX_API);
+    console.log('Using FUTURES_API:', FUTURES_API);
+
     // Fetch CEX
-    fetch('http://localhost:4000/api/tokens')
-      .then(res => res.json())
-      .then(data => setCexTokens(data.sort((a: CEXToken, b: CEXToken) => b.rvol - a.rvol)))
+    fetch(`${CEX_API}/api/tokens`)
+      .then(res => {
+        console.log('CEX API Response Status:', res.status);
+        return res.json();
+      })
+      .then(data => {
+        console.log('CEX Data received:', data);
+        setCexTokens(data.sort((a: CEXToken, b: CEXToken) => b.rvol - a.rvol));
+      })
       .catch(err => console.error("CEX Error:", err));
 
     // Fetch Futures
-    fetch('http://localhost:4001/api/signals')
-      .then(res => res.json())
-      .then(data => setFuturesSignals(data.sort((a: FuturesSignal, b: FuturesSignal) => b.signal_confidence - a.signal_confidence)))
+    fetch(`${FUTURES_API}/api/signals`)
+      .then(res => {
+        console.log('Futures API Response Status:', res.status);
+        return res.json();
+      })
+      .then(data => {
+        console.log('Futures Data received:', data);
+        setFuturesSignals(data.sort((a: FuturesSignal, b: FuturesSignal) => b.signal_confidence - a.signal_confidence));
+      })
       .catch(err => console.error("Futures Error:", err));
 
     // SSE CEX
-    const cexSource = new EventSource('http://localhost:4000/stream');
+    const cexSource = new EventSource(`${CEX_API}/stream`);
     cexSource.onmessage = (event) => {
       const newData: CEXToken[] = JSON.parse(event.data);
+      console.log('CEX SSE Data:', newData);
       setCexTokens(prev => {
         const map = new Map(prev.map(t => [t.symbol, t]));
         newData.forEach(t => map.set(t.symbol, t));
         return Array.from(map.values()).sort((a, b) => b.rvol - a.rvol);
       });
     };
+    cexSource.onerror = (err) => {
+      console.error('CEX SSE Error:', err);
+    };
 
     // SSE Futures
-    const futuresSource = new EventSource('http://localhost:4001/stream');
+    const futuresSource = new EventSource(`${FUTURES_API}/stream`);
     futuresSource.onmessage = (event) => {
       const newData: FuturesSignal[] = JSON.parse(event.data);
+      console.log('Futures SSE Data:', newData);
       setFuturesSignals(prev => {
         const map = new Map(prev.map(t => [t.symbol, t]));
         newData.forEach(t => map.set(t.symbol, t));
         return Array.from(map.values()).sort((a, b) => b.signal_confidence - a.signal_confidence);
       });
+    };
+    futuresSource.onerror = (err) => {
+      console.error('Futures SSE Error:', err);
     };
 
     return () => {
