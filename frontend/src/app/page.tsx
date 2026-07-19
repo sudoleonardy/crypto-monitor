@@ -6,6 +6,7 @@ type CEXToken = {
   volume_usdt: number; rvol: number; buy_volume_pct: number; oi_status: string;
   entry_price: number; stop_loss: number; take_profit: number;
 };
+
 type FuturesSignal = {
   symbol: string; name: string; price_change_24h: number; volume_usdt: number;
   rvol: number; oi_change_24h: number; funding_rate: number; buy_volume_pct: number;
@@ -22,29 +23,41 @@ export default function Home() {
     const CEX_API = process.env.NEXT_PUBLIC_CEX_API || 'http://localhost:4000';
     const FUTURES_API = process.env.NEXT_PUBLIC_FUTURES_API || 'http://localhost:4001';
 
-    fetch(`${CEX_API}/api/tokens`).then(r => r.json()).then(d => setCexTokens(d.sort((a, b) => b.rvol - a.rvol)));
-    fetch(`${FUTURES_API}/api/signals`).then(r => r.json()).then(d => setFuturesSignals(d.sort((a, b) => b.signal_confidence - a.signal_confidence)));
+    fetch(`${CEX_API}/api/tokens`)
+      .then(r => r.json())
+      .then((d: CEXToken[]) => setCexTokens(d.sort((a: CEXToken, b: CEXToken) => b.rvol - a.rvol)));
+    
+    fetch(`${FUTURES_API}/api/signals`)
+      .then(r => r.json())
+      .then((d: FuturesSignal[]) => setFuturesSignals(d.sort((a: FuturesSignal, b: FuturesSignal) => b.signal_confidence - a.signal_confidence)));
 
     const cexSource = new EventSource(`${CEX_API}/stream`);
     cexSource.onmessage = (e) => {
-      const map = new Map(cexTokens.map(t => [t.symbol, t]));
-      JSON.parse(e.data).forEach((t: CEXToken) => map.set(t.symbol, t));
-      setCexTokens(Array.from(map.values()).sort((a, b) => b.rvol - a.rvol));
+      const newData: CEXToken[] = JSON.parse(e.data);
+      setCexTokens(prev => {
+        const map = new Map(prev.map(t => [t.symbol, t]));
+        newData.forEach(t => map.set(t.symbol, t));
+        return Array.from(map.values()).sort((a: CEXToken, b: CEXToken) => b.rvol - a.rvol);
+      });
     };
 
     const futSource = new EventSource(`${FUTURES_API}/stream`);
     futSource.onmessage = (e) => {
-      const map = new Map(futuresSignals.map(t => [t.symbol, t]));
-      JSON.parse(e.data).forEach((t: FuturesSignal) => map.set(t.symbol, t));
-      setFuturesSignals(Array.from(map.values()).sort((a, b) => b.signal_confidence - a.signal_confidence));
+      const newData: FuturesSignal[] = JSON.parse(e.data);
+      setFuturesSignals(prev => {
+        const map = new Map(prev.map(t => [t.symbol, t]));
+        newData.forEach(t => map.set(t.symbol, t));
+        return Array.from(map.values()).sort((a: FuturesSignal, b: FuturesSignal) => b.signal_confidence - a.signal_confidence);
+      });
     };
+
     return () => { cexSource.close(); futSource.close(); };
   }, []);
 
   return (
     <main className="p-6 bg-gray-950 text-gray-100 min-h-screen font-sans">
       <div className="max-w-7xl mx-auto">
-        <h1 className="text-3xl font-bold mb-6 text-red-400">🚀 Crypto Scanner Dashboard</h1>
+        <h1 className="text-3xl font-bold mb-6 text-red-400"> Crypto Scanner Dashboard</h1>
         <div className="flex gap-2 mb-6">
           <button onClick={() => setActiveTab('cex')} className={`px-6 py-3 rounded-lg font-semibold ${activeTab === 'cex' ? 'bg-orange-600 text-white' : 'bg-gray-800 text-gray-400'}`}>🏦 CEX Scanner</button>
           <button onClick={() => setActiveTab('futures')} className={`px-6 py-3 rounded-lg font-semibold ${activeTab === 'futures' ? 'bg-green-600 text-white' : 'bg-gray-800 text-gray-400'}`}>📈 Futures Signals</button>
